@@ -1,8 +1,10 @@
-import { streamText } from "ai";
+import { streamText, tool } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
+import { z } from "zod";
 import { DEFAULT_MODEL, calcMessageCost, type ModelId } from "@/lib/config";
 import { searchSimilarChunks, buildRagContext, listDocuments } from "@/lib/rag";
 import { warmUp } from "@/lib/db";
+import { searchTavily } from "@/lib/tools/tavily-search";
 
 const openai = createOpenAI({
   apiKey: process.env.PROXYAPI_KEY ?? "missing-key",
@@ -54,13 +56,47 @@ function buildRagErrorMessage(err: unknown): RagError {
   };
 }
 
+const tavilyWebSearch = tool({
+  description:
+    "Поиск актуальной информации в интернете. Используй этот инструмент, " +
+    "когда пользователь спрашивает о текущих событиях, новостях, курсах валют, " +
+    "погоде, ценах, датах мероприятий, статистике — обо всём, что требует " +
+    "свежих данных, которых нет в твоей обучающей выборке. " +
+    "НЕ используй для вопросов о внутренних регламентах компании — для этого " +
+    "есть контекст из документов.",
+  parameters: z.object({
+    query: z
+      .string()
+      .describe(
+        "Поисковый запрос. Формулируй на русском или английском языке так, " +
+        "чтобы получить максимально релевантные результаты."
+      ),
+    maxResults: z
+      .number()
+      .optional()
+      .default(5)
+      .describe("Максимальное количество результатов (1–10)"),
+  }),
+  execute: async ({ query, maxResults }) => {
+    return await searchTavily(query, maxResults);
+  },
+});
+
 function buildSystemPrompt(ragContext: string, hasDocuments: boolean): string {
+  const searchNote =
+    "\n\nДОСТУПНЫЙ ИНСТРУМЕНТ:\n" +
+    "У тебя есть инструмент tavilyWebSearch для поиска актуальной информации в интернете. " +
+    "Используй его по своему усмотрению, когда вопрос требует свежих данных: новости, курсы валют, погода, " +
+    "текущие события, статистика, цены, даты мероприятий. " +
+    "НЕ используй поиск для вопросов о внутренних регламентах компании — отвечай на них из контекста документов.";
+
   if (!hasDocuments) {
     return (
       "Ты — HR-ассистент компании Continental. Отвечаешь сотрудникам на вопросы об отпусках, командировках и компенсациях.\n" +
       "На данный момент в базе нет загруженных документов — скажи об этом сотруднику и предложи загрузить PDF/TXT/MD-файлы с регламентами.\n" +
       "Не придумывай внутренние правила компании, ссылайся только на общие нормы ТК РФ.\n" +
-      "Будь краток, отвечай по существу."
+      "Будь краток, отвечай по существу." +
+      searchNote
     );
   }
 
@@ -74,7 +110,8 @@ function buildSystemPrompt(ragContext: string, hasDocuments: boolean): string {
     "5. Отвечай кратко и по существу. Без вводных фраз типа «Конечно!», «Отличный вопрос!».\n" +
     "6. Запрещено давать юридические консультации.\n\n" +
     "КОНТЕКСТ ИЗ ДОКУМЕНТОВ:\n" +
-    ragContext
+    ragContext +
+    searchNote
   );
 }
 
@@ -135,6 +172,7 @@ export async function POST(req: Request) {
       maxTokens: 1000,
       system,
       messages,
+      tools: { tavilyWebSearch },
     });
 
     const response = result.toDataStreamResponse({
