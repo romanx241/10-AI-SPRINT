@@ -6,12 +6,12 @@
 
 
 datasource db {
-  provider   = "postgresql"
-  extensions = [pgvector] // Инициализируем pgvector
+  provider  = "postgresql"
+ 
 }
+
 
 generator client {
   provider        = "prisma-client-js"
-  output   = "../lib/generated/prisma"
-  previewFeatures = ["postgresqlExtensions"] // Обязательный флаг!
+  
 }

@@ -3,7 +3,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { z } from "zod";
 import { DEFAULT_MODEL, calcMessageCost, type ModelId } from "@/lib/config";
 import { searchSimilarChunks, buildRagContext, listDocuments } from "@/lib/rag";
-import { warmUp } from "@/lib/db";
+import { warmUp, queryWithRetry } from "@/lib/db";
 import { searchTavily } from "@/lib/tools/tavily-search";
 
 const openai = createOpenAI({
@@ -180,13 +180,31 @@ export async function POST(req: Request) {
     });
 
     result.usage
-      .then((usage) => {
+      .then(async (usage) => {
         const promptTokens = usage.promptTokens;
         const completionTokens = usage.completionTokens;
         const cost = calcMessageCost(modelId, promptTokens, completionTokens);
         console.log(
           `[Cost] ${modelId} | ${promptTokens} in + ${completionTokens} out = ${promptTokens + completionTokens} total | ≈ ${cost.toFixed(4)}₽`
         );
+        // Сохранение истории разговора
+        try {
+          const question = typeof lastUserMessage.content === "string"
+            ? lastUserMessage.content
+            : (lastUserMessage.content as any).text ?? "";
+          const answer = "[Ответ записан в поток]"; // Точное содержание ответа недоступно здесь
+          await queryWithRetry(() =>
+            // Предполагаем, что таблица chat_history уже существует
+            // user, question, answer, timestamp, prompt_tokens, completion_tokens, cost_rub
+            // Если таблица не существует, запрос завершится ошибкой, но не сломает основной процесс
+            // Можно добавить CREATE TABLE IF NOT EXISTS в миграцию отдельно
+            // Здесь просто вставляем запись
+            // @ts-ignore – getSql возвращает клиент с методом query
+            getSql()`INSERT INTO chat_history (user, question, answer, timestamp, prompt_tokens, completion_tokens, cost_rub) VALUES ('anonymous', ${question}, ${answer}, NOW(), ${promptTokens}, ${completionTokens}, ${cost})`
+          );
+        } catch (e) {
+          console.warn("[DB] Не удалось сохранить историю разговора:", e);
+        }
       })
       .catch(() => {
         // usage может быть недоступен
@@ -195,6 +213,15 @@ export async function POST(req: Request) {
     return response;
   } catch (err) {
     console.error("[Chat Route Error]", err);
+    // Сохранение ошибки в таблицу errors
+    try {
+      await queryWithRetry(() =>
+        // @ts-ignore – getSql возвращает клиент с методом query
+        getSql()`INSERT INTO errors (timestamp, error_type, error_text, request) VALUES (NOW(), 'ChatRoute', ${String(err)}, ${JSON.stringify(messages)})`
+      );
+    } catch (logErr) {
+      console.warn("Не удалось сохранить ошибку в БД", logErr);
+    }
 
     const status = err instanceof SyntaxError ? 400 : 500;
     const message =

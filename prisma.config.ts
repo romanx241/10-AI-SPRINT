@@ -2,20 +2,17 @@
 // npm install --save-dev prisma dotenv
 
 
+
 import "dotenv/config";
-import { defineConfig  } from "@prisma/config";
+import { defineConfig, env } from "@prisma/config";
 
 export default defineConfig({
-  // Указываем путь к схеме
   schema: "prisma/schema.prisma",
-  
-  // Настройки для CLI миграций
   migrations: {
     path: "prisma/migrations",
   },
-  
-  // Переносим подключение к базе данных сюда!
   datasource: {
-    url: process.env.DATABASE_URL ?? "",
+    // Для утилиты миграций (CLI) используем прямую строку БЕЗ пулера
+    url: env("DIRECT_URL"), 
   },
 });
