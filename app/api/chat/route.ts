@@ -29,11 +29,18 @@ function buildRagErrorMessage(err: unknown): RagError {
         hint: "Таблицы documents/chunks не созданы. Миграция не была запущена.",
       };
     }
-    if (msg.includes("connect") || msg.includes("econnrefused") || msg.includes("timeout") || msg.includes("fetch failed")) {
+    if (
+      msg.includes("connect") ||
+      msg.includes("econnrefused") ||
+      msg.includes("timeout") ||
+      msg.includes("fetch failed") ||
+      msg.includes("unreachable") ||
+      msg.includes("query failed after")
+    ) {
       return {
         message: "Не удалось подключиться к базе данных. Проверьте DATABASE_URL и VPN/сеть.",
         name: "DB_CONNECTION_ERROR",
-        hint: "Neon database unreachable. Check network.",
+        hint: "Neon database unreachable. Check network/variables.",
       };
     }
     if (msg.includes("401") || msg.includes("unauthorized") || msg.includes("apikey") || msg.includes("missing-key")) {

@@ -8,14 +8,16 @@ config({ path: resolve(__dirname, "..", ".env") });
 
 import { neon } from "@neondatabase/serverless";
 
-const DATABASE_URL = process.env.DATABASE_URL!;
-if (!DATABASE_URL) {
-  console.error("DATABASE_URL не задан в .env");
+// DDL (CREATE TABLE / INDEX) — используем DIRECT_URL (без пулера),
+// т.к. PgBouncer в transaction mode не поддерживает DDL
+const DIRECT_URL = process.env.DIRECT_URL!;
+if (!DIRECT_URL) {
+  console.error("DIRECT_URL не задан в .env");
   process.exit(1);
 }
 
 async function migrate() {
-  const sql = neon(DATABASE_URL);
+  const sql = neon(DIRECT_URL);
 
   console.log("Запуск миграции...\n");
 
@@ -51,6 +53,37 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_chunks_document_id ON chunks(document_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_chunks_embedding ON chunks USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100)`;
   console.log("   [OK] индексы созданы");
+
+  // 5. Таблица истории разговоров
+  console.log("5. Создание таблицы chat_history...");
+  await sql`CREATE TABLE IF NOT EXISTS chat_history (
+    id SERIAL PRIMARY KEY,
+    "user" TEXT NOT NULL DEFAULT 'anonymous',
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL DEFAULT '',
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_rub NUMERIC(12,6) NOT NULL DEFAULT 0
+  )`;
+  console.log("   [OK] таблица chat_history создана");
+
+  // 6. Таблица ошибок
+  console.log("6. Создание таблицы errors...");
+  await sql`CREATE TABLE IF NOT EXISTS errors (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    error_type TEXT NOT NULL,
+    error_text TEXT NOT NULL,
+    request JSONB
+  )`;
+  console.log("   [OK] таблица errors создана");
+
+  // 7. Индекс на timestamp для быстрых агрегатов
+  console.log("7. Создание индексов для chat_history...");
+  await sql`CREATE INDEX IF NOT EXISTS idx_chat_history_timestamp ON chat_history(timestamp)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_errors_timestamp ON errors(timestamp)`;
+  console.log("   [OK] индексы chat_history/errors созданы");
 
   console.log("\nМиграция завершена успешно!");
 }
